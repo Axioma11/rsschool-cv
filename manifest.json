@@ -1,0 +1,12 @@
+{
+    "display_name": "Prompt Block Library",
+    "loading_order": 100,
+    "requires": [],
+    "optional": [],
+    "js": "index.js",
+    "css": "style.css",
+    "author": "axioma11",
+    "version": "1.0.0",
+    "homePage": "https://github.com/axioma11/rsschool-cv",
+    "auto_update": true
+}
