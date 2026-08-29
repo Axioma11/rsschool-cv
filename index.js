@@ -22,10 +22,18 @@ const DUMMY_CHARACTER_ID = 100001;
 const LEGACY_CHARACTER_ID = 100000;
 /** Sentinel value used in the source dropdown for the library itself. */
 const LIBRARY_SOURCE = '@@library';
+/** Prefix for the per-folder entries of the source dropdown. */
+const FOLDER_PREFIX = '@@folder:';
+/** Field stamped on every prompt this extension writes, linking it to a library entry. */
+const ORIGIN_FIELD = 'pblOrigin';
+/** Value the folder picker returns when the user wants a brand new folder. */
+const NEW_FOLDER_SENTINEL = '@@new-folder';
 
 const defaultSettings = {
     /** @type {LibraryEntry[]} */
     library: [],
+    /** @type {string[]} Folder names, in display order. */
+    folders: [],
     /** Blocks with less content than this are treated as separators and hidden by default. */
     junkThreshold: 20,
     hideJunk: true,
@@ -36,6 +44,7 @@ const defaultSettings = {
  * @typedef {object} LibraryEntry
  * @property {string} id
  * @property {string[]} tags
+ * @property {string} folder Folder name, empty when the entry sits outside any.
  * @property {string} sourcePreset
  * @property {number} addedAt
  * @property {object} prompt
@@ -49,6 +58,7 @@ const defaultSettings = {
  * @property {boolean} attached Whether the block sits in the preset's prompt list.
  * @property {boolean} enabled Whether the block is toggled on in the preset.
  * @property {string[]} tags Library tags, empty for preset blocks.
+ * @property {string} [folder] Library folder, for library items.
  * @property {string} [libraryId] Library entry id, for library items.
  */
 
@@ -103,6 +113,48 @@ const STRINGS = {
         libraryEmpty: 'The library is empty. Pick any preset above, tick the blocks you need and press "To library".',
         libraryOnly: 'Library blocks only.',
         transferFailed: 'Could not copy the blocks. Check the server connection.',
+        libraryAll: 'Library — all',
+        noFolder: 'No folder',
+        versionTitle: 'A block with this name is already in the library',
+        versionExisting: 'In the library: {0} tok',
+        versionNew: 'Being added: {0} tok',
+        versionHint: 'Save it as a new version under a different name, or replace the library copy with this one.',
+        versionAdd: 'Save as new',
+        versionReplace: 'Replace',
+        versionSkip: 'Skip',
+        updatedInLibrary: 'Updated in the library: {0}',
+        editBlock: 'Edit block',
+        editName: 'Name',
+        editRole: 'Role',
+        editContent: 'Text',
+        save: 'Save',
+        saved: 'Saved.',
+        propagate: 'Update this block in the presets too',
+        propagateTitle: 'Where to update',
+        propagateHint: 'Text and settings of these blocks will be replaced with the library version. Their position and on/off state stay as they are.',
+        propagateLinked: 'copied from here',
+        propagateByName: 'same name',
+        propagateNone: 'This block was not found in any preset.',
+        propagateDone: 'Updated in presets: {0}',
+        deleteFromPreset: 'Delete from preset',
+        deleteTitle: 'Delete blocks',
+        deleteHint: 'These blocks will be removed from the presets completely. This cannot be undone.',
+        deleteSkipped: 'Built-in blocks cannot be deleted: {0}',
+        deleted: 'Deleted blocks: {0}',
+        deleteFailed: 'Could not delete. Check the server connection.',
+        presetOnly: 'Preset blocks only.',
+        folders: 'Folders',
+        moveToFolder: 'Move to folder',
+        newFolder: 'New folder',
+        newFolderPrompt: 'Folder name:',
+        renameFolder: 'Rename folder',
+        deleteFolder: 'Delete folder',
+        deleteFolderConfirm: 'Delete the folder "{0}"? The blocks in it stay in the library, without a folder.',
+        folderExists: 'A folder with this name already exists.',
+        pickFolder: 'Move {0} block(s) to:',
+        movedToFolder: 'Moved: {0}',
+        folderOnly: 'Open a folder first.',
+        oneBlockOnly: 'Pick exactly one block.',
     },
     ru: {
         title: 'Библиотека блоков промпта',
@@ -152,6 +204,48 @@ const STRINGS = {
         libraryEmpty: 'Библиотека пуста. Выбери сверху любой пресет, отметь нужные блоки и нажми «В библиотеку».',
         libraryOnly: 'Только для блоков из библиотеки.',
         transferFailed: 'Не удалось перенести блоки. Проверь связь с сервером.',
+        libraryAll: 'Библиотека — все',
+        noFolder: 'Без папки',
+        versionTitle: 'Блок с таким названием уже есть в библиотеке',
+        versionExisting: 'В библиотеке: {0} ток.',
+        versionNew: 'Добавляется: {0} ток.',
+        versionHint: 'Можно сохранить как новую версию под другим названием или заменить копию в библиотеке этой.',
+        versionAdd: 'Сохранить как новый',
+        versionReplace: 'Заменить',
+        versionSkip: 'Пропустить',
+        updatedInLibrary: 'Обновлено в библиотеке: {0}',
+        editBlock: 'Редактировать блок',
+        editName: 'Название',
+        editRole: 'Роль',
+        editContent: 'Текст',
+        save: 'Сохранить',
+        saved: 'Сохранено.',
+        propagate: 'Обновить этот блок и в пресетах',
+        propagateTitle: 'Где обновить',
+        propagateHint: 'Текст и настройки этих блоков заменятся версией из библиотеки. Позиция в списке и вкл/выкл останутся как есть.',
+        propagateLinked: 'скопирован отсюда',
+        propagateByName: 'совпадает название',
+        propagateNone: 'Этот блок не найден ни в одном пресете.',
+        propagateDone: 'Обновлено в пресетах: {0}',
+        deleteFromPreset: 'Удалить из пресета',
+        deleteTitle: 'Удаление блоков',
+        deleteHint: 'Эти блоки будут удалены из пресетов полностью. Отменить будет нельзя.',
+        deleteSkipped: 'Встроенные блоки удалить нельзя: {0}',
+        deleted: 'Удалено блоков: {0}',
+        deleteFailed: 'Не удалось удалить. Проверь связь с сервером.',
+        presetOnly: 'Только для блоков из пресетов.',
+        folders: 'Папки',
+        moveToFolder: 'Переместить в папку',
+        newFolder: 'Новая папка',
+        newFolderPrompt: 'Название папки:',
+        renameFolder: 'Переименовать папку',
+        deleteFolder: 'Удалить папку',
+        deleteFolderConfirm: 'Удалить папку «{0}»? Блоки из неё останутся в библиотеке, без папки.',
+        folderExists: 'Папка с таким названием уже есть.',
+        pickFolder: 'Переместить блоков: {0}. Куда:',
+        movedToFolder: 'Перемещено: {0}',
+        folderOnly: 'Сначала открой папку.',
+        oneBlockOnly: 'Выбери ровно один блок.',
     },
 };
 
@@ -305,7 +399,7 @@ function readPresetBlocks(presetName) {
         .map(prompt => {
             const index = order.findIndex(entry => entry?.identifier === prompt.identifier);
             return {
-                key: `${presetName}${prompt.identifier}`,
+                key: `${presetName}::${prompt.identifier}`,
                 source: presetName,
                 prompt,
                 attached: index !== -1,
@@ -315,15 +409,19 @@ function readPresetBlocks(presetName) {
         });
 }
 
-/** @returns {BlockItem[]} */
-function readLibraryBlocks() {
-    return getSettings().library.map(entry => ({
-        key: `${LIBRARY_SOURCE}${entry.id}`,
+/**
+ * @param {string|null} folder `null` for the whole library, `''` for blocks without a folder.
+ * @returns {BlockItem[]}
+ */
+function readLibraryBlocks(folder = null) {
+    return libraryEntries(folder).map(entry => ({
+        key: `${LIBRARY_SOURCE}::${entry.id}`,
         source: LIBRARY_SOURCE,
         prompt: entry.prompt,
         attached: true,
         enabled: true,
         tags: Array.isArray(entry.tags) ? entry.tags : [],
+        folder: entry.folder ?? '',
         libraryId: entry.id,
     }));
 }
@@ -332,14 +430,17 @@ function readLibraryBlocks() {
  * A clean copy of a prompt, ready to be dropped into another preset. Everything
  * that describes the block travels with it — text, role, injection position,
  * depth, order, triggers, override flag — only the identity is reset.
+ * The block also gets an invisible origin stamp when it comes from the library,
+ * which is what lets a later edit find every copy again.
  * @param {object} prompt
  * @param {string} name
+ * @param {string} [originId]
  * @returns {object}
  */
-function clonePrompt(prompt, name) {
+function clonePrompt(prompt, name, originId = '') {
     const copy = structuredClone(prompt);
     delete copy.extension;
-    return {
+    const clone = {
         ...copy,
         identifier: uuidv4(),
         name: name,
@@ -347,6 +448,11 @@ function clonePrompt(prompt, name) {
         marker: false,
         enabled: true,
     };
+    const origin = originId || prompt?.[ORIGIN_FIELD];
+    if (origin) {
+        clone[ORIGIN_FIELD] = origin;
+    }
+    return clone;
 }
 
 function isJunk(prompt) {
@@ -375,32 +481,190 @@ function uniqueName(name, taken) {
 // #region Library
 
 /**
- * @param {BlockItem[]} items
- * @returns {number} How many entries were actually added.
+ * Library entries, optionally narrowed to one folder.
+ * @param {string|null} folder `null` for every entry, `''` for entries without a folder.
+ * @returns {LibraryEntry[]}
  */
-function addToLibrary(items) {
+function libraryEntries(folder = null) {
+    const entries = getSettings().library;
+    return folder === null ? entries : entries.filter(entry => (entry.folder ?? '') === folder);
+}
+
+/**
+ * Folder names. Folders referenced by an entry but missing from the list (after
+ * an import, say) are adopted, so nothing becomes unreachable.
+ * @returns {string[]}
+ */
+function listFolders() {
     const settings = getSettings();
-    let added = 0;
-    for (const item of items) {
-        const content = String(item.prompt?.content ?? '');
-        const duplicate = settings.library.some(entry =>
-            entry.prompt?.name === item.prompt?.name && String(entry.prompt?.content ?? '') === content);
-        if (duplicate) {
-            continue;
-        }
-        settings.library.push({
-            id: uuidv4(),
-            tags: [...(item.tags ?? [])],
-            sourcePreset: item.source === LIBRARY_SOURCE ? '' : item.source,
-            addedAt: Date.now(),
-            prompt: structuredClone(item.prompt),
-        });
-        added++;
+    if (!Array.isArray(settings.folders)) {
+        settings.folders = [];
     }
-    if (added) {
+    for (const entry of settings.library) {
+        const folder = entry.folder ?? '';
+        if (folder && !settings.folders.includes(folder)) {
+            settings.folders.push(folder);
+        }
+    }
+    return settings.folders;
+}
+
+/**
+ * @param {string} name
+ * @returns {boolean} False when the name is empty or already taken.
+ */
+function createFolder(name) {
+    const clean = String(name ?? '').trim();
+    if (!clean || listFolders().includes(clean)) {
+        return false;
+    }
+    getSettings().folders.push(clean);
+    saveSettings();
+    return true;
+}
+
+/**
+ * @param {string} oldName
+ * @param {string} newName
+ * @returns {boolean}
+ */
+function renameFolder(oldName, newName) {
+    const clean = String(newName ?? '').trim();
+    const folders = listFolders();
+    if (!clean || !folders.includes(oldName) || folders.includes(clean)) {
+        return false;
+    }
+    folders[folders.indexOf(oldName)] = clean;
+    for (const entry of getSettings().library) {
+        if ((entry.folder ?? '') === oldName) {
+            entry.folder = clean;
+        }
+    }
+    saveSettings();
+    return true;
+}
+
+/**
+ * Removes a folder; its blocks stay in the library without one.
+ * @param {string} name
+ * @returns {number} How many blocks lost their folder.
+ */
+function deleteFolder(name) {
+    const folders = listFolders();
+    const index = folders.indexOf(name);
+    if (index === -1) {
+        return 0;
+    }
+    folders.splice(index, 1);
+    let moved = 0;
+    for (const entry of getSettings().library) {
+        if ((entry.folder ?? '') === name) {
+            entry.folder = '';
+            moved++;
+        }
+    }
+    saveSettings();
+    return moved;
+}
+
+/**
+ * @param {string[]} ids
+ * @param {string} folder
+ * @returns {number}
+ */
+function moveToFolder(ids, folder) {
+    let moved = 0;
+    for (const entry of getSettings().library) {
+        if (ids.includes(entry.id) && (entry.folder ?? '') !== folder) {
+            entry.folder = folder;
+            moved++;
+        }
+    }
+    if (moved) {
         saveSettings();
     }
-    return added;
+    return moved;
+}
+
+function allLibraryTags() {
+    const tags = new Set();
+    for (const entry of getSettings().library) {
+        for (const tag of entry.tags ?? []) {
+            tags.add(tag);
+        }
+    }
+    return [...tags].sort((a, b) => a.localeCompare(b));
+}
+
+/**
+ * The base name without a trailing "(vN)".
+ * @param {string} name
+ * @returns {string}
+ */
+function baseName(name) {
+    return String(name ?? '').replace(/\s*\(v\d+\)\s*$/i, '').trim();
+}
+
+/**
+ * The next free "(vN)" name for a block whose name is already taken.
+ * @param {string} name
+ * @returns {string}
+ */
+function nextVersionName(name) {
+    const base = baseName(name) || String(name ?? '');
+    const taken = new Set(getSettings().library.map(entry => entry.prompt?.name));
+    let version = 2;
+    while (taken.has(`${base} (v${version})`)) {
+        version++;
+    }
+    return `${base} (v${version})`;
+}
+
+/**
+ * @param {object} prompt
+ * @param {object} [options]
+ * @param {string[]} [options.tags]
+ * @param {string} [options.folder]
+ * @param {string} [options.sourcePreset]
+ * @param {string} [options.name] Overrides the prompt's own name.
+ * @returns {LibraryEntry}
+ */
+function addLibraryEntry(prompt, { tags = [], folder = '', sourcePreset = '', name = '' } = {}) {
+    const stored = structuredClone(prompt);
+    delete stored[ORIGIN_FIELD];
+    if (name) {
+        stored.name = name;
+    }
+    const entry = {
+        id: uuidv4(),
+        tags: [...tags],
+        folder: folder,
+        sourcePreset: sourcePreset,
+        addedAt: Date.now(),
+        prompt: stored,
+    };
+    getSettings().library.push(entry);
+    saveSettings();
+    return entry;
+}
+
+/**
+ * Replaces the stored block of an entry, keeping its id, tags and folder.
+ * @param {string} id
+ * @param {object} prompt
+ * @returns {boolean}
+ */
+function replaceLibraryEntry(id, prompt) {
+    const entry = getSettings().library.find(candidate => candidate.id === id);
+    if (!entry) {
+        return false;
+    }
+    const stored = structuredClone(prompt);
+    delete stored[ORIGIN_FIELD];
+    entry.prompt = stored;
+    entry.addedAt = Date.now();
+    saveSettings();
+    return true;
 }
 
 /**
@@ -418,14 +682,29 @@ function removeFromLibrary(ids) {
     return removed;
 }
 
-function allLibraryTags() {
-    const tags = new Set();
-    for (const entry of getSettings().library) {
-        for (const tag of entry.tags ?? []) {
-            tags.add(tag);
+/**
+ * Every block across every preset that is the same block as the given library
+ * entry: either copied from it by this extension, or carrying the same name.
+ * @param {LibraryEntry} entry
+ * @param {string} [previousName] Name the entry had before it was renamed.
+ * @returns {{preset: string, prompt: object, linked: boolean}[]}
+ */
+function findLinkedBlocks(entry, previousName = '') {
+    const names = new Set([entry.prompt?.name, previousName].filter(Boolean));
+    const found = [];
+    for (const preset of listPresets()) {
+        const settings = readableSettings(preset.name);
+        for (const prompt of settings?.prompts ?? []) {
+            if (!prompt || prompt.marker) {
+                continue;
+            }
+            const linked = prompt[ORIGIN_FIELD] === entry.id;
+            if (linked || names.has(prompt.name)) {
+                found.push({ preset: preset.name, prompt, linked });
+            }
         }
     }
-    return [...tags].sort((a, b) => a.localeCompare(b));
+    return found;
 }
 
 // #endregion
@@ -433,56 +712,192 @@ function allLibraryTags() {
 // #region Transfer
 
 /**
+ * Applies a change to every copy of a preset — the live settings when it is the
+ * active one, and the stored preset — then writes the preset file.
+ * @param {string} name
+ * @param {(settings: object) => void} mutate
+ * @returns {Promise<boolean>} False when there is no such preset.
+ */
+async function mutatePreset(name, mutate) {
+    const manager = getPresetManager('openai');
+    if (!manager) {
+        throw new Error('Chat Completion preset manager is not available');
+    }
+    const destinations = writableSettings(name);
+    if (!destinations.length) {
+        console.warn(`[${MODULE_NAME}] preset not found: ${name}`);
+        return false;
+    }
+    for (const settings of destinations) {
+        mutate(settings);
+    }
+    const stored = listPresets().find(preset => preset.name === name)?.settings;
+    if (stored) {
+        await manager.savePreset(name, stored, { skipUpdate: true });
+    }
+    return true;
+}
+
+/** Persists the live settings and redraws the prompt manager. */
+async function refreshActivePreset() {
+    await promptManager?.saveServiceSettings?.();
+    promptManager?.render?.();
+}
+
+/**
  * Writes the prepared blocks into their target presets and persists everything.
  * @param {{target: string, item: BlockItem, name: string}[]} plan
  * @returns {Promise<{blocks: number, presets: number}>}
  */
 async function applyTransfer(plan) {
-    const manager = getPresetManager('openai');
-    if (!manager) {
-        throw new Error('Chat Completion preset manager is not available');
-    }
     const targets = [...new Set(plan.map(entry => entry.target))];
     let blocks = 0;
     let touchedActive = false;
 
     for (const target of targets) {
-        const destinations = writableSettings(target);
-        if (!destinations.length) {
-            console.warn(`[${MODULE_NAME}] preset not found: ${target}`);
+        // One prompt object per target, cloned into each copy of the preset, so
+        // the live settings and the stored preset carry the same identifier.
+        const prompts = plan
+            .filter(entry => entry.target === target)
+            .map(entry => clonePrompt(entry.item.prompt, entry.name, entry.item.libraryId ?? ''));
+
+        const written = await mutatePreset(target, settings => {
+            if (!Array.isArray(settings.prompts)) {
+                settings.prompts = [];
+            }
+            const order = getOrder(settings, true);
+            for (const prompt of prompts) {
+                settings.prompts.push(structuredClone(prompt));
+                order.push({ identifier: prompt.identifier, enabled: true });
+            }
+        });
+
+        if (!written) {
             continue;
         }
-
-        for (const entry of plan.filter(item => item.target === target)) {
-            // One prompt object per target, shared by the live and the stored copy,
-            // so both sides carry the same identifier.
-            const prompt = clonePrompt(entry.item.prompt, entry.name);
-            for (const settings of destinations) {
-                if (!Array.isArray(settings.prompts)) {
-                    settings.prompts = [];
-                }
-                settings.prompts.push(structuredClone(prompt));
-                getOrder(settings, true).push({ identifier: prompt.identifier, enabled: true });
-            }
-            blocks++;
-        }
-
+        blocks += prompts.length;
         if (target === activePresetName()) {
             touchedActive = true;
-        }
-
-        const stored = listPresets().find(preset => preset.name === target)?.settings;
-        if (stored) {
-            await manager.savePreset(target, stored, { skipUpdate: true });
         }
     }
 
     if (touchedActive) {
-        await promptManager?.saveServiceSettings?.();
-        promptManager?.render?.();
+        await refreshActivePreset();
     }
 
     return { blocks, presets: targets.length };
+}
+
+/**
+ * Removes blocks from presets, both from the prompt list and from every order.
+ * @param {{preset: string, identifiers: string[]}[]} plan
+ * @returns {Promise<number>} How many blocks were removed.
+ */
+async function deleteBlocks(plan) {
+    let removed = 0;
+    let touchedActive = false;
+
+    for (const { preset, identifiers } of plan) {
+        if (!identifiers.length) {
+            continue;
+        }
+        const ids = new Set(identifiers);
+        const written = await mutatePreset(preset, settings => {
+            if (Array.isArray(settings.prompts)) {
+                settings.prompts = settings.prompts.filter(prompt => !ids.has(prompt?.identifier));
+            }
+            for (const list of settings.prompt_order ?? []) {
+                if (Array.isArray(list?.order)) {
+                    list.order = list.order.filter(entry => !ids.has(entry?.identifier));
+                }
+            }
+        });
+        if (!written) {
+            continue;
+        }
+        removed += identifiers.length;
+        if (preset === activePresetName()) {
+            touchedActive = true;
+        }
+    }
+
+    if (touchedActive) {
+        await refreshActivePreset();
+    }
+    return removed;
+}
+
+/** Fields that describe the block itself, as opposed to where it sits. */
+const BLOCK_FIELDS = [
+    'name',
+    'content',
+    'role',
+    'injection_position',
+    'injection_depth',
+    'injection_order',
+    'injection_trigger',
+    'forbid_overrides',
+];
+
+/**
+ * Overwrites a preset block with the library version, leaving its identifier,
+ * its place in the list and its on/off state alone.
+ * @param {object} target
+ * @param {object} source
+ * @param {string} originId
+ * @returns {void}
+ */
+function applyLibraryBlock(target, source, originId) {
+    for (const field of BLOCK_FIELDS) {
+        if (source[field] !== undefined) {
+            target[field] = structuredClone(source[field]);
+        }
+    }
+    if (originId) {
+        target[ORIGIN_FIELD] = originId;
+    }
+}
+
+/**
+ * Pushes an edited library block out to the preset blocks it came from.
+ * @param {{preset: string, prompt: object}[]} targets
+ * @param {object} source The library version of the block.
+ * @param {string} originId
+ * @returns {Promise<number>} How many blocks were updated.
+ */
+async function updateBlocksInPresets(targets, source, originId) {
+    const presets = [...new Set(targets.map(target => target.preset))];
+    let updated = 0;
+    let touchedActive = false;
+
+    for (const preset of presets) {
+        const ids = new Set(targets
+            .filter(target => target.preset === preset)
+            .map(target => target.prompt?.identifier));
+
+        let count = 0;
+        const written = await mutatePreset(preset, settings => {
+            for (const prompt of settings.prompts ?? []) {
+                if (prompt && ids.has(prompt.identifier)) {
+                    applyLibraryBlock(prompt, source, originId);
+                    count++;
+                }
+            }
+        });
+        if (!written) {
+            continue;
+        }
+        // Counted once per block, not once per copy of the preset.
+        updated += Math.min(count, ids.size);
+        if (preset === activePresetName()) {
+            touchedActive = true;
+        }
+    }
+
+    if (touchedActive) {
+        await refreshActivePreset();
+    }
+    return updated;
 }
 
 /**
@@ -657,8 +1072,9 @@ function exportLibrary() {
     const settings = getSettings();
     const payload = {
         type: 'prompt-block-library',
-        version: 1,
+        version: 2,
         exportedAt: new Date().toISOString(),
+        folders: listFolders(),
         library: settings.library,
     };
     download(JSON.stringify(payload, null, 4), 'prompt-block-library.json', 'application/json');
@@ -709,12 +1125,21 @@ async function importLibrary() {
         .map(entry => ({
             id: uuidv4(),
             tags: Array.isArray(entry.tags) ? entry.tags.map(String) : [],
+            folder: String(entry.folder ?? ''),
             sourcePreset: String(entry.sourcePreset ?? ''),
             addedAt: Number(entry.addedAt) || Date.now(),
             prompt: entry.prompt,
         }));
 
-    settings.library = choice === POPUP_RESULT.CUSTOM1 ? sanitized : [...settings.library, ...sanitized];
+    const replacing = choice === POPUP_RESULT.CUSTOM1;
+    settings.library = replacing ? sanitized : [...settings.library, ...sanitized];
+    const importedFolders = Array.isArray(payload?.folders) ? payload.folders.map(String) : [];
+    settings.folders = replacing ? [] : listFolders();
+    for (const folder of importedFolders) {
+        if (folder && !settings.folders.includes(folder)) {
+            settings.folders.push(folder);
+        }
+    }
     saveSettings();
     toastr.success(t('imported', sanitized.length));
     return true;
@@ -765,6 +1190,451 @@ async function fillTokenCounts(listElement) {
     }
 }
 
+/**
+ * Token count for a piece of text, cached like the ones in the list.
+ * @param {string} text
+ * @returns {Promise<number>}
+ */
+async function countTokens(text) {
+    const content = String(text ?? '');
+    if (!tokenCache.has(content)) {
+        try {
+            tokenCache.set(content, content ? await getTokenCountAsync(content) : 0);
+        } catch (error) {
+            console.debug(`[${MODULE_NAME}] token count failed`, error);
+            tokenCache.set(content, 0);
+        }
+    }
+    return tokenCache.get(content);
+}
+
+/** Small labelled row used by the dialogs below. */
+function labelledControl(labelText, control) {
+    const wrapper = document.createElement('label');
+    wrapper.classList.add('pbl-field');
+    const caption = document.createElement('span');
+    caption.classList.add('pbl-field-label');
+    caption.textContent = labelText;
+    wrapper.append(caption, control);
+    return wrapper;
+}
+
+/**
+ * Asks what to do when the library already holds a block under this name.
+ * @param {LibraryEntry} existing
+ * @param {object} prompt The block being added.
+ * @returns {Promise<{action: 'add'|'replace'|'skip', name?: string}>}
+ */
+async function resolveLibraryVersion(existing, prompt) {
+    const existingTokens = await countTokens(existing.prompt?.content);
+    const newTokens = await countTokens(prompt?.content);
+
+    const root = document.createElement('div');
+    root.classList.add('pbl-version');
+
+    const title = document.createElement('div');
+    title.classList.add('pbl-version-title');
+    title.textContent = t('versionTitle');
+
+    const hint = document.createElement('div');
+    hint.classList.add('pbl-hint');
+    hint.textContent = t('versionHint');
+
+    const compare = document.createElement('div');
+    compare.classList.add('pbl-compare');
+    const oldLine = document.createElement('div');
+    oldLine.textContent = `${existing.prompt?.name} — ${t('versionExisting', existingTokens)}`;
+    const newLine = document.createElement('div');
+    newLine.textContent = `${prompt?.name} — ${t('versionNew', newTokens)}`;
+    compare.append(oldLine, newLine);
+
+    const nameInput = document.createElement('input');
+    nameInput.type = 'text';
+    nameInput.classList.add('text_pole');
+    nameInput.value = nextVersionName(prompt?.name);
+
+    root.append(title, compare, hint, labelledControl(t('editName'), nameInput));
+
+    const popup = new Popup(root, POPUP_TYPE.CONFIRM, '', {
+        okButton: t('versionAdd'),
+        cancelButton: t('versionSkip'),
+        customButtons: [{ text: t('versionReplace'), result: POPUP_RESULT.CUSTOM1 }],
+        allowVerticalScrolling: true,
+    });
+    const result = await popup.show();
+
+    if (result === POPUP_RESULT.CUSTOM1) {
+        return { action: 'replace' };
+    }
+    if (result !== POPUP_RESULT.AFFIRMATIVE) {
+        return { action: 'skip' };
+    }
+    return { action: 'add', name: nameInput.value.trim() || nextVersionName(prompt?.name) };
+}
+
+/**
+ * Puts blocks into the library, asking about name clashes one by one.
+ * @param {BlockItem[]} items
+ * @param {string} [folder] Folder the new entries land in.
+ * @returns {Promise<{added: number, updated: number}>}
+ */
+async function addToLibraryFlow(items, folder = '') {
+    let added = 0;
+    let updated = 0;
+    let duplicates = 0;
+
+    for (const item of items) {
+        const prompt = item.prompt;
+        const name = String(prompt?.name ?? '').trim() || 'Prompt';
+        const content = String(prompt?.content ?? '');
+        const sourcePreset = item.source === LIBRARY_SOURCE ? '' : item.source;
+        const library = getSettings().library;
+
+        if (library.some(entry => entry.prompt?.name === name && String(entry.prompt?.content ?? '') === content)) {
+            duplicates++;
+            continue;
+        }
+
+        const clash = library.find(entry => entry.prompt?.name === name);
+        if (!clash) {
+            addLibraryEntry(prompt, { tags: item.tags, folder, sourcePreset });
+            added++;
+            continue;
+        }
+
+        const decision = await resolveLibraryVersion(clash, prompt);
+        if (decision.action === 'skip') {
+            continue;
+        }
+        if (decision.action === 'replace') {
+            replaceLibraryEntry(clash.id, prompt);
+            updated++;
+            continue;
+        }
+        addLibraryEntry(prompt, {
+            tags: item.tags,
+            folder: folder || clash.folder || '',
+            sourcePreset,
+            name: decision.name,
+        });
+        added++;
+    }
+
+    if (added) {
+        toastr.success(t('addedToLibrary', added));
+    }
+    if (updated) {
+        toastr.success(t('updatedInLibrary', updated));
+    }
+    if (!added && !updated && duplicates) {
+        toastr.info(t('alreadyInLibrary'));
+    }
+    return { added, updated };
+}
+
+/**
+ * Lets the user pick which preset copies of a block should follow a library edit.
+ * @param {{preset: string, prompt: object, linked: boolean}[]} found
+ * @returns {Promise<{preset: string, prompt: object}[]|null>}
+ */
+async function pickPropagationTargets(found) {
+    const root = document.createElement('div');
+    root.classList.add('pbl-propagate');
+
+    const hint = document.createElement('div');
+    hint.classList.add('pbl-hint');
+    hint.textContent = t('propagateHint');
+    root.append(hint);
+
+    const boxes = [];
+    for (const target of found) {
+        const row = document.createElement('label');
+        row.classList.add('pbl-target');
+
+        const box = document.createElement('input');
+        box.type = 'checkbox';
+        box.checked = true;
+        boxes.push({ box, target });
+
+        const text = document.createElement('span');
+        const title = document.createElement('div');
+        title.textContent = `${target.preset} — ${target.prompt?.name}`;
+        const badge = document.createElement('small');
+        badge.classList.add('pbl-conflict-target');
+        badge.textContent = target.linked ? t('propagateLinked') : t('propagateByName');
+        text.append(title, badge);
+
+        row.append(box, text);
+        root.append(row);
+    }
+
+    const popup = new Popup(root, POPUP_TYPE.CONFIRM, '', {
+        okButton: t('save'),
+        cancelButton: t('cancel'),
+        allowVerticalScrolling: true,
+    });
+    if (await popup.show() !== POPUP_RESULT.AFFIRMATIVE) {
+        return null;
+    }
+    return boxes.filter(entry => entry.box.checked).map(entry => entry.target);
+}
+
+/**
+ * Edits a library block, optionally pushing the change out to the presets.
+ * @param {BlockItem} item
+ * @returns {Promise<boolean>} True when something was saved.
+ */
+async function editLibraryBlock(item) {
+    const entry = getSettings().library.find(candidate => candidate.id === item.libraryId);
+    if (!entry) {
+        toastr.info(t('libraryOnly'));
+        return false;
+    }
+    const previousName = String(entry.prompt?.name ?? '');
+
+    const root = document.createElement('div');
+    root.classList.add('pbl-editor');
+
+    const nameInput = document.createElement('input');
+    nameInput.type = 'text';
+    nameInput.classList.add('text_pole');
+    nameInput.value = previousName;
+
+    const roleSelect = document.createElement('select');
+    roleSelect.classList.add('text_pole');
+    for (const role of ['system', 'user', 'assistant']) {
+        const option = document.createElement('option');
+        option.value = role;
+        option.textContent = role;
+        roleSelect.append(option);
+    }
+    roleSelect.value = entry.prompt?.role ?? 'system';
+
+    const contentInput = document.createElement('textarea');
+    contentInput.classList.add('text_pole', 'pbl-editor-text');
+    contentInput.rows = 10;
+    contentInput.value = String(entry.prompt?.content ?? '');
+
+    const propagateLabel = document.createElement('label');
+    propagateLabel.classList.add('pbl-junk');
+    const propagateBox = document.createElement('input');
+    propagateBox.type = 'checkbox';
+    const propagateText = document.createElement('span');
+    propagateText.textContent = t('propagate');
+    propagateLabel.append(propagateBox, propagateText);
+
+    const contentField = labelledControl(t('editContent'), contentInput);
+    contentField.classList.add('pbl-field-grow');
+
+    root.append(
+        labelledControl(t('editName'), nameInput),
+        labelledControl(t('editRole'), roleSelect),
+        contentField,
+        propagateLabel,
+    );
+
+    const popup = new Popup(root, POPUP_TYPE.TEXT, '', {
+        okButton: t('save'),
+        cancelButton: t('cancel'),
+        wide: true,
+        large: true,
+        allowVerticalScrolling: true,
+    });
+    if (await popup.show() !== POPUP_RESULT.AFFIRMATIVE) {
+        return false;
+    }
+
+    entry.prompt.name = nameInput.value.trim() || previousName;
+    entry.prompt.role = roleSelect.value;
+    entry.prompt.content = contentInput.value;
+    saveSettings();
+
+    if (!propagateBox.checked) {
+        toastr.success(t('saved'));
+        return true;
+    }
+
+    const found = findLinkedBlocks(entry, previousName);
+    if (!found.length) {
+        toastr.info(t('propagateNone'));
+        return true;
+    }
+    const chosen = await pickPropagationTargets(found);
+    if (!chosen?.length) {
+        toastr.success(t('saved'));
+        return true;
+    }
+    try {
+        const updated = await updateBlocksInPresets(chosen, entry.prompt, entry.id);
+        toastr.success(t('propagateDone', updated));
+    } catch (error) {
+        console.error(`[${MODULE_NAME}] propagation failed`, error);
+        toastr.error(t('transferFailed'));
+    }
+    return true;
+}
+
+/**
+ * Deletes the selected preset blocks, after a confirmation listing them.
+ * @param {BlockItem[]} items
+ * @returns {Promise<boolean>}
+ */
+async function deleteBlocksFlow(items) {
+    const blocks = items.filter(item => item.source !== LIBRARY_SOURCE);
+    if (!blocks.length) {
+        toastr.info(t('presetOnly'));
+        return false;
+    }
+
+    const protectedBlocks = blocks.filter(item => item.prompt?.system_prompt);
+    const removable = blocks.filter(item => !item.prompt?.system_prompt);
+    if (!removable.length) {
+        toastr.warning(t('deleteSkipped', protectedBlocks.map(item => item.prompt?.name).join(', ')));
+        return false;
+    }
+
+    const root = document.createElement('div');
+    root.classList.add('pbl-delete');
+    const hint = document.createElement('div');
+    hint.classList.add('pbl-hint');
+    hint.textContent = t('deleteHint');
+    root.append(hint);
+    for (const item of removable) {
+        const row = document.createElement('div');
+        row.classList.add('pbl-delete-row');
+        const where = document.createElement('small');
+        where.classList.add('pbl-conflict-target');
+        where.textContent = item.source;
+        const name = document.createElement('div');
+        name.textContent = item.prompt?.name || '—';
+        row.append(where, name);
+        root.append(row);
+    }
+
+    const popup = new Popup(root, POPUP_TYPE.CONFIRM, '', {
+        okButton: t('deleteFromPreset'),
+        cancelButton: t('cancel'),
+        allowVerticalScrolling: true,
+    });
+    if (await popup.show() !== POPUP_RESULT.AFFIRMATIVE) {
+        return false;
+    }
+
+    const plan = [...new Set(removable.map(item => item.source))].map(preset => ({
+        preset,
+        identifiers: removable
+            .filter(item => item.source === preset)
+            .map(item => item.prompt?.identifier)
+            .filter(Boolean),
+    }));
+
+    try {
+        const removed = await deleteBlocks(plan);
+        toastr.success(t('deleted', removed));
+        if (protectedBlocks.length) {
+            toastr.info(t('deleteSkipped', protectedBlocks.map(item => item.prompt?.name).join(', ')));
+        }
+        return true;
+    } catch (error) {
+        console.error(`[${MODULE_NAME}] delete failed`, error);
+        toastr.error(t('deleteFailed'));
+        return false;
+    }
+}
+
+/**
+ * Folder picker, with an entry for creating one on the spot.
+ * @param {number} count Blocks about to be moved, for the title.
+ * @returns {Promise<string|null>} Folder name, `''` for none, `null` when cancelled.
+ */
+async function pickFolder(count) {
+    const root = document.createElement('div');
+    root.classList.add('pbl-menu');
+
+    const title = document.createElement('div');
+    title.classList.add('pbl-targets-title');
+    title.textContent = t('pickFolder', count);
+    root.append(title);
+
+    let picked = null;
+    const popup = new Popup(root, POPUP_TYPE.TEXT, '', {
+        okButton: false,
+        cancelButton: t('cancel'),
+        allowVerticalScrolling: true,
+    });
+
+    const addRow = (icon, text, value) => {
+        const row = document.createElement('div');
+        row.classList.add('pbl-menu-item');
+        const iconElement = document.createElement('div');
+        iconElement.classList.add('fa-solid', icon);
+        const label = document.createElement('span');
+        label.textContent = text;
+        row.append(iconElement, label);
+        row.addEventListener('click', () => {
+            picked = value;
+            popup.complete(POPUP_RESULT.AFFIRMATIVE);
+        });
+        root.append(row);
+    };
+
+    addRow('fa-inbox', t('noFolder'), '');
+    for (const folder of listFolders()) {
+        addRow('fa-folder', folder, folder);
+    }
+    addRow('fa-folder-plus', t('newFolder'), NEW_FOLDER_SENTINEL);
+
+    await popup.show();
+
+    if (picked === NEW_FOLDER_SENTINEL) {
+        const created = await promptForFolderName(t('newFolder'));
+        return created ?? null;
+    }
+    return picked;
+}
+
+/**
+ * Asks for a folder name and creates it.
+ * @param {string} title
+ * @returns {Promise<string|null>} The created folder name.
+ */
+async function promptForFolderName(title) {
+    const popup = new Popup(`${title}\n${t('newFolderPrompt')}`, POPUP_TYPE.INPUT, '', {
+        okButton: t('save'),
+        cancelButton: t('cancel'),
+    });
+    await popup.show();
+    if (popup.result !== POPUP_RESULT.AFFIRMATIVE) {
+        return null;
+    }
+    const name = String(popup.value ?? '').trim();
+    if (!name) {
+        return null;
+    }
+    if (!createFolder(name)) {
+        toastr.warning(t('folderExists'));
+        return listFolders().includes(name) ? name : null;
+    }
+    return name;
+}
+
+/**
+ * @param {string} value A source dropdown value.
+ * @returns {boolean} Whether it points at the library rather than a preset.
+ */
+function isLibrarySource(value) {
+    return value === LIBRARY_SOURCE || String(value).startsWith(FOLDER_PREFIX);
+}
+
+/**
+ * @param {string} value A source dropdown value.
+ * @returns {string|null} Folder name, `''` for the no-folder view, `null` for
+ *  the whole library or a preset.
+ */
+function folderOfSource(value) {
+    return String(value).startsWith(FOLDER_PREFIX) ? String(value).slice(FOLDER_PREFIX.length) : null;
+}
+
 function openMainWindow() {
     const settings = getSettings();
     const presets = listPresets();
@@ -785,19 +1655,42 @@ function openMainWindow() {
 
     const sourceSelect = document.createElement('select');
     sourceSelect.classList.add('text_pole', 'pbl-source');
-    const libraryOption = document.createElement('option');
-    libraryOption.value = LIBRARY_SOURCE;
-    libraryOption.textContent = `★ ${t('library')}`;
-    sourceSelect.append(libraryOption);
     const active = activePresetName();
-    for (const preset of presets) {
-        const option = document.createElement('option');
-        option.value = preset.name;
-        option.textContent = preset.name + (preset.name === active ? t('currentSuffix') : '');
-        sourceSelect.append(option);
+
+    function fillSources() {
+        const previous = sourceSelect.value;
+        sourceSelect.innerHTML = '';
+
+        const libraryOption = document.createElement('option');
+        libraryOption.value = LIBRARY_SOURCE;
+        libraryOption.textContent = `★ ${t('libraryAll')}`;
+        sourceSelect.append(libraryOption);
+
+        const noFolder = document.createElement('option');
+        noFolder.value = FOLDER_PREFIX;
+        noFolder.textContent = `★ / ${t('noFolder')}`;
+        sourceSelect.append(noFolder);
+
+        for (const folder of listFolders()) {
+            const option = document.createElement('option');
+            option.value = FOLDER_PREFIX + folder;
+            option.textContent = `★ / ${folder}`;
+            sourceSelect.append(option);
+        }
+
+        for (const preset of listPresets()) {
+            const option = document.createElement('option');
+            option.value = preset.name;
+            option.textContent = preset.name + (preset.name === active ? t('currentSuffix') : '');
+            sourceSelect.append(option);
+        }
+
+        const values = [...sourceSelect.options].map(option => option.value);
+        const wanted = values.includes(previous) ? previous : settings.lastSource;
+        sourceSelect.value = values.includes(wanted) ? wanted : LIBRARY_SOURCE;
     }
-    const known = [LIBRARY_SOURCE, ...presets.map(preset => preset.name)];
-    sourceSelect.value = known.includes(settings.lastSource) ? settings.lastSource : LIBRARY_SOURCE;
+
+    fillSources();
 
     const search = document.createElement('input');
     search.type = 'search';
@@ -863,7 +1756,7 @@ function openMainWindow() {
     // --- rendering ---------------------------------------------------------
     function currentItems() {
         const source = sourceSelect.value;
-        return source === LIBRARY_SOURCE ? readLibraryBlocks() : readPresetBlocks(source);
+        return isLibrarySource(source) ? readLibraryBlocks(folderOfSource(source)) : readPresetBlocks(source);
     }
 
     function updateInfo() {
@@ -872,7 +1765,7 @@ function openMainWindow() {
 
     function renderTagBar() {
         tagBar.innerHTML = '';
-        if (sourceSelect.value !== LIBRARY_SOURCE) {
+        if (!isLibrarySource(sourceSelect.value)) {
             tagBar.classList.add('pbl-hidden');
             return;
         }
@@ -915,14 +1808,14 @@ function openMainWindow() {
 
     function renderList() {
         // Adding library entries to the library again makes no sense.
-        libraryButton.classList.toggle('pbl-hidden', sourceSelect.value === LIBRARY_SOURCE);
+        libraryButton.classList.toggle('pbl-hidden', isLibrarySource(sourceSelect.value));
         list.innerHTML = '';
         const items = visibleItems();
 
         if (!items.length) {
             const empty = document.createElement('li');
             empty.classList.add('pbl-empty');
-            empty.textContent = sourceSelect.value === LIBRARY_SOURCE && !getSettings().library.length
+            empty.textContent = isLibrarySource(sourceSelect.value) && !getSettings().library.length
                 ? t('libraryEmpty')
                 : t('emptyList');
             list.append(empty);
@@ -971,6 +1864,12 @@ function openMainWindow() {
                 badge.textContent = part;
                 meta.append(badge);
             }
+            if (item.folder && sourceSelect.value === LIBRARY_SOURCE) {
+                const badge = document.createElement('span');
+                badge.classList.add('pbl-badge', 'pbl-badge-folder');
+                badge.textContent = item.folder;
+                meta.append(badge);
+            }
             for (const tag of item.tags) {
                 const badge = document.createElement('span');
                 badge.classList.add('pbl-badge', 'pbl-badge-tag');
@@ -986,6 +1885,20 @@ function openMainWindow() {
 
             const rowActions = document.createElement('div');
             rowActions.classList.add('pbl-item-actions');
+
+            if (item.libraryId) {
+                const edit = document.createElement('div');
+                edit.classList.add('fa-solid', 'fa-pencil', 'pbl-icon');
+                edit.title = t('editBlock');
+                edit.addEventListener('click', async event => {
+                    event.stopPropagation();
+                    if (await editLibraryBlock(item)) {
+                        renderTagBar();
+                        renderList();
+                    }
+                });
+                rowActions.append(edit);
+            }
 
             const expand = document.createElement('div');
             expand.classList.add('fa-solid', 'fa-chevron-down', 'pbl-icon');
@@ -1053,40 +1966,120 @@ function openMainWindow() {
         await transferBlocks([...selection.values()]);
     });
 
-    libraryButton.addEventListener('click', () => {
+    libraryButton.addEventListener('click', async () => {
         const items = [...selection.values()];
         if (!items.length) {
             toastr.info(t('nothingSelected'));
             return;
         }
-        const added = addToLibrary(items);
-        if (added) {
-            toastr.success(t('addedToLibrary', added));
-        } else {
-            toastr.info(t('alreadyInLibrary'));
-        }
+        await addToLibraryFlow(items, folderOfSource(sourceSelect.value) ?? '');
+        fillSources();
         renderTagBar();
         renderList();
     });
 
     moreButton.addEventListener('click', async () => {
-        const action = await showMoreMenu(sourceSelect.value === LIBRARY_SOURCE);
+        const source = sourceSelect.value;
+        const folder = folderOfSource(source);
+        const action = await showMoreMenu({ isLibrary: isLibrarySource(source), folder });
+
         switch (action) {
-            case 'export':
-                exportLibrary();
-                break;
-            case 'import':
-                if (await importLibrary()) {
+            case 'edit': {
+                const entries = [...selection.values()].filter(item => item.libraryId);
+                if (entries.length !== 1) {
+                    toastr.info(t('oneBlockOnly'));
+                    break;
+                }
+                if (await editLibraryBlock(entries[0])) {
                     renderTagBar();
                     renderList();
                 }
                 break;
-            case 'tags':
+            }
+            case 'delete': {
+                if (await deleteBlocksFlow([...selection.values()])) {
+                    for (const item of [...selection.values()]) {
+                        if (item.source !== LIBRARY_SOURCE) {
+                            selection.delete(item.key);
+                        }
+                    }
+                    renderList();
+                }
+                break;
+            }
+            case 'move': {
+                const ids = [...selection.values()].map(item => item.libraryId).filter(Boolean);
+                if (!ids.length) {
+                    toastr.info(t('libraryOnly'));
+                    break;
+                }
+                const target = await pickFolder(ids.length);
+                if (target === null) {
+                    break;
+                }
+                toastr.success(t('movedToFolder', moveToFolder(ids, target)));
+                fillSources();
+                renderList();
+                break;
+            }
+            case 'newFolder': {
+                if (await promptForFolderName(t('newFolder'))) {
+                    fillSources();
+                }
+                break;
+            }
+            case 'renameFolder': {
+                if (!folder) {
+                    toastr.info(t('folderOnly'));
+                    break;
+                }
+                const rename = new Popup(t('newFolderPrompt'), POPUP_TYPE.INPUT, folder, {
+                    okButton: t('save'),
+                    cancelButton: t('cancel'),
+                });
+                await rename.show();
+                if (rename.result !== POPUP_RESULT.AFFIRMATIVE) {
+                    break;
+                }
+                const name = String(rename.value ?? '').trim();
+                if (!name || name === folder) {
+                    break;
+                }
+                if (!renameFolder(folder, name)) {
+                    toastr.warning(t('folderExists'));
+                    break;
+                }
+                fillSources();
+                sourceSelect.value = FOLDER_PREFIX + name;
+                renderList();
+                break;
+            }
+            case 'deleteFolder': {
+                if (!folder) {
+                    toastr.info(t('folderOnly'));
+                    break;
+                }
+                const confirmation = new Popup(t('deleteFolderConfirm', folder), POPUP_TYPE.CONFIRM, '', {
+                    okButton: t('deleteFolder'),
+                    cancelButton: t('cancel'),
+                });
+                if (await confirmation.show() !== POPUP_RESULT.AFFIRMATIVE) {
+                    break;
+                }
+                deleteFolder(folder);
+                fillSources();
+                sourceSelect.value = LIBRARY_SOURCE;
+                renderTagBar();
+                renderList();
+                break;
+            }
+            case 'tags': {
                 if (await editTags([...selection.values()])) {
                     renderTagBar();
                     renderList();
                 }
                 break;
+            }
             case 'remove': {
                 const ids = [...selection.values()].map(item => item.libraryId).filter(Boolean);
                 if (!ids.length) {
@@ -1104,6 +2097,16 @@ function openMainWindow() {
                 renderList();
                 break;
             }
+            case 'export':
+                exportLibrary();
+                break;
+            case 'import':
+                if (await importLibrary()) {
+                    fillSources();
+                    renderTagBar();
+                    renderList();
+                }
+                break;
             case 'settings':
                 if (await editThreshold()) {
                     renderList();
@@ -1128,15 +2131,26 @@ function openMainWindow() {
 }
 
 /**
- * @param {boolean} isLibrary
+ * @param {object} state
+ * @param {boolean} state.isLibrary
+ * @param {string|null} state.folder Open folder, `''` for the no-folder view.
  * @returns {Promise<string|null>}
  */
-async function showMoreMenu(isLibrary) {
+async function showMoreMenu({ isLibrary, folder }) {
     const entries = [
         ...(isLibrary ? [
+            { id: 'edit', icon: 'fa-pencil', text: t('editBlock') },
             { id: 'tags', icon: 'fa-tags', text: t('editTags') },
+            { id: 'move', icon: 'fa-folder-open', text: t('moveToFolder') },
+            { id: 'newFolder', icon: 'fa-folder-plus', text: t('newFolder') },
+            ...(folder ? [
+                { id: 'renameFolder', icon: 'fa-i-cursor', text: t('renameFolder') },
+                { id: 'deleteFolder', icon: 'fa-folder-minus', text: t('deleteFolder') },
+            ] : []),
             { id: 'remove', icon: 'fa-trash-can', text: t('removeFromLibrary') },
-        ] : []),
+        ] : [
+            { id: 'delete', icon: 'fa-trash-can', text: t('deleteFromPreset') },
+        ]),
         { id: 'export', icon: 'fa-file-export', text: t('exportLibrary') },
         { id: 'import', icon: 'fa-file-import', text: t('importLibrary') },
         { id: 'settings', icon: 'fa-sliders', text: t('settings') },
@@ -1262,21 +2276,16 @@ function decoratePromptManager() {
         const star = document.createElement('span');
         star.classList.add('fa-solid', 'fa-star', 'fa-xs', 'pbl-row-star');
         star.title = t('starTitle');
-        star.addEventListener('click', event => {
+        star.addEventListener('click', async event => {
             event.stopPropagation();
-            const added = addToLibrary([{
-                key: `${activePresetName()}${identifier}`,
+            await addToLibraryFlow([{
+                key: `${activePresetName()}::${identifier}`,
                 source: activePresetName(),
                 prompt,
                 attached: true,
                 enabled: true,
                 tags: [],
             }]);
-            if (added) {
-                toastr.success(t('addedToLibrary', added));
-            } else {
-                toastr.info(t('alreadyInLibrary'));
-            }
         });
         controls.prepend(star);
     }

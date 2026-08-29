@@ -146,6 +146,11 @@
     border-style: dashed;
 }
 
+.pbl-badge-folder {
+    border-style: dotted;
+    opacity: 0.9;
+}
+
 .pbl-preview {
     margin: 8px 0 0 0;
     padding: 8px;
@@ -312,4 +317,81 @@
 
 .pbl-row-star:hover {
     opacity: 1;
+}
+
+/* --- editor, version and delete dialogs ---------------------------------- */
+
+.pbl-field {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    margin: 0 0 10px 0;
+    cursor: default;
+}
+
+.pbl-field-label {
+    font-size: 0.85em;
+    opacity: 0.8;
+}
+
+.pbl-field input,
+.pbl-field select,
+.pbl-field textarea {
+    width: 100%;
+    box-sizing: border-box;
+}
+
+.pbl-editor {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    min-height: 0;
+    text-align: left;
+}
+
+/* The text field takes whatever room the dialog has left. */
+.pbl-field-grow {
+    flex: 1 1 auto;
+    min-height: 0;
+}
+
+.pbl-editor-text {
+    flex: 1 1 auto;
+    min-height: 20vh;
+    resize: none;
+    font-family: inherit;
+    white-space: pre-wrap;
+}
+
+.pbl-version,
+.pbl-delete,
+.pbl-propagate {
+    text-align: left;
+}
+
+.pbl-version-title {
+    font-weight: bold;
+    margin-bottom: 8px;
+}
+
+.pbl-compare {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    margin-bottom: 10px;
+    padding: 8px;
+    border-radius: 4px;
+    background-color: rgba(0, 0, 0, 0.2);
+    font-size: 0.9em;
+    word-break: break-word;
+}
+
+.pbl-delete-row {
+    padding: 8px 0;
+    border-bottom: 1px solid var(--SmartThemeBorderColor);
+    word-break: break-word;
+}
+
+.pbl-delete-row:last-child {
+    border-bottom: none;
 }
