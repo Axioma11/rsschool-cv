@@ -129,9 +129,10 @@ const STRINGS = {
         editContent: 'Text',
         save: 'Save',
         saved: 'Saved.',
-        propagate: 'Update this block in the presets too',
+        propagateCount: 'Update the other copies too (found: {0})',
+        saveFailed: 'Could not save. Check the server connection.',
         propagateTitle: 'Where to update',
-        propagateHint: 'Text and settings of these blocks will be replaced with the library version. Their position and on/off state stay as they are.',
+        propagateHint: 'Text and settings of these blocks will be replaced with the version you just saved. Their position and on/off state stay as they are.',
         propagateLinked: 'copied from here',
         propagateByName: 'same name',
         propagateNone: 'This block was not found in any preset.',
@@ -220,9 +221,10 @@ const STRINGS = {
         editContent: 'Текст',
         save: 'Сохранить',
         saved: 'Сохранено.',
-        propagate: 'Обновить этот блок и в пресетах',
+        propagateCount: 'Обновить и остальные копии (найдено: {0})',
+        saveFailed: 'Не удалось сохранить. Проверь связь с сервером.',
         propagateTitle: 'Где обновить',
-        propagateHint: 'Текст и настройки этих блоков заменятся версией из библиотеки. Позиция в списке и вкл/выкл останутся как есть.',
+        propagateHint: 'Текст и настройки этих блоков заменятся только что сохранённой версией. Позиция в списке и вкл/выкл останутся как есть.',
         propagateLinked: 'скопирован отсюда',
         propagateByName: 'совпадает название',
         propagateNone: 'Этот блок не найден ни в одном пресете.',
@@ -404,8 +406,21 @@ function readPresetBlocks(presetName) {
                 prompt,
                 attached: index !== -1,
                 enabled: index !== -1 ? !!order[index].enabled : false,
+                position: index,
                 tags: [],
             };
+        })
+        // The prompt list order, the same one the prompt manager shows and the
+        // model receives. Detached blocks have no place in it, so they follow
+        // at the end, by name.
+        .sort((left, right) => {
+            if (left.attached && right.attached) {
+                return left.position - right.position;
+            }
+            if (left.attached !== right.attached) {
+                return left.attached ? -1 : 1;
+            }
+            return String(left.prompt.name ?? '').localeCompare(String(right.prompt.name ?? ''));
         });
 }
 
@@ -683,27 +698,66 @@ function removeFromLibrary(ids) {
 }
 
 /**
- * Every block across every preset that is the same block as the given library
- * entry: either copied from it by this extension, or carrying the same name.
- * @param {LibraryEntry} entry
- * @param {string} [previousName] Name the entry had before it was renamed.
- * @returns {{preset: string, prompt: object, linked: boolean}[]}
+ * @typedef {object} BlockCopy
+ * @property {'preset'|'library'} kind
+ * @property {string} label Human readable "where — name".
+ * @property {boolean} linked Found by the origin stamp rather than by name.
+ * @property {string} [preset] Preset name, for preset copies.
+ * @property {object} [prompt] The prompt object, for preset copies.
+ * @property {LibraryEntry} [entry] The entry, for library copies.
  */
-function findLinkedBlocks(entry, previousName = '') {
-    const names = new Set([entry.prompt?.name, previousName].filter(Boolean));
+
+/**
+ * Every other copy of a block — in any preset and in the library. A copy is
+ * either stamped with the same origin (so it was made from the same library
+ * entry) or simply carries the same name.
+ * @param {object} options
+ * @param {string} [options.originId]
+ * @param {string[]} options.names Names to match: the current one, and the one
+ *  it had before this edit.
+ * @param {string} [options.skipIdentifier] Prompt to leave out — the one being edited.
+ * @param {string} [options.skipLibraryId] Library entry to leave out.
+ * @returns {BlockCopy[]}
+ */
+function findCopies({ originId = '', names = [], skipIdentifier = '', skipLibraryId = '' }) {
+    const wanted = new Set(names.filter(Boolean));
+    /** @type {BlockCopy[]} */
     const found = [];
+
     for (const preset of listPresets()) {
         const settings = readableSettings(preset.name);
         for (const prompt of settings?.prompts ?? []) {
-            if (!prompt || prompt.marker) {
+            if (!prompt || prompt.marker || !prompt.identifier || prompt.identifier === skipIdentifier) {
                 continue;
             }
-            const linked = prompt[ORIGIN_FIELD] === entry.id;
-            if (linked || names.has(prompt.name)) {
-                found.push({ preset: preset.name, prompt, linked });
+            const linked = Boolean(originId) && prompt[ORIGIN_FIELD] === originId;
+            if (linked || wanted.has(prompt.name)) {
+                found.push({
+                    kind: 'preset',
+                    label: `${preset.name} — ${prompt.name}`,
+                    linked,
+                    preset: preset.name,
+                    prompt,
+                });
             }
         }
     }
+
+    for (const entry of getSettings().library) {
+        if (entry.id === skipLibraryId) {
+            continue;
+        }
+        const linked = Boolean(originId) && entry.id === originId;
+        if (linked || wanted.has(entry.prompt?.name)) {
+            found.push({
+                kind: 'library',
+                label: `★ ${t('library')} — ${entry.prompt?.name}`,
+                linked,
+                entry,
+            });
+        }
+    }
+
     return found;
 }
 
@@ -840,14 +894,14 @@ const BLOCK_FIELDS = [
 ];
 
 /**
- * Overwrites a preset block with the library version, leaving its identifier,
+ * Overwrites a block with another version of itself, leaving its identifier,
  * its place in the list and its on/off state alone.
  * @param {object} target
  * @param {object} source
- * @param {string} originId
+ * @param {string} [originId]
  * @returns {void}
  */
-function applyLibraryBlock(target, source, originId) {
+function applyBlockFields(target, source, originId = '') {
     for (const field of BLOCK_FIELDS) {
         if (source[field] !== undefined) {
             target[field] = structuredClone(source[field]);
@@ -859,36 +913,43 @@ function applyLibraryBlock(target, source, originId) {
 }
 
 /**
- * Pushes an edited library block out to the preset blocks it came from.
- * @param {{preset: string, prompt: object}[]} targets
- * @param {object} source The library version of the block.
- * @param {string} originId
- * @returns {Promise<number>} How many blocks were updated.
+ * Pushes an edited block out to its other copies, in presets and in the library.
+ * @param {BlockCopy[]} copies
+ * @param {object} source The version that wins.
+ * @param {string} [originId]
+ * @returns {Promise<number>} How many copies were updated.
  */
-async function updateBlocksInPresets(targets, source, originId) {
-    const presets = [...new Set(targets.map(target => target.preset))];
+async function applyCopies(copies, source, originId = '') {
     let updated = 0;
     let touchedActive = false;
 
-    for (const preset of presets) {
-        const ids = new Set(targets
-            .filter(target => target.preset === preset)
-            .map(target => target.prompt?.identifier));
+    const libraryCopies = copies.filter(copy => copy.kind === 'library');
+    for (const copy of libraryCopies) {
+        applyBlockFields(copy.entry.prompt, source);
+        delete copy.entry.prompt[ORIGIN_FIELD];
+        updated++;
+    }
+    if (libraryCopies.length) {
+        saveSettings();
+    }
 
-        let count = 0;
+    const presetCopies = copies.filter(copy => copy.kind === 'preset');
+    for (const preset of [...new Set(presetCopies.map(copy => copy.preset))]) {
+        const ids = new Set(presetCopies
+            .filter(copy => copy.preset === preset)
+            .map(copy => copy.prompt?.identifier));
+
         const written = await mutatePreset(preset, settings => {
             for (const prompt of settings.prompts ?? []) {
                 if (prompt && ids.has(prompt.identifier)) {
-                    applyLibraryBlock(prompt, source, originId);
-                    count++;
+                    applyBlockFields(prompt, source, originId);
                 }
             }
         });
         if (!written) {
             continue;
         }
-        // Counted once per block, not once per copy of the preset.
-        updated += Math.min(count, ids.size);
+        updated += ids.size;
         if (preset === activePresetName()) {
             touchedActive = true;
         }
@@ -898,6 +959,37 @@ async function updateBlocksInPresets(targets, source, originId) {
         await refreshActivePreset();
     }
     return updated;
+}
+
+/**
+ * Saves the edited fields into the block itself.
+ * @param {BlockItem} item
+ * @param {object} values Name, role and content.
+ * @returns {Promise<boolean>}
+ */
+async function saveBlockInPlace(item, values) {
+    if (item.libraryId) {
+        const entry = getSettings().library.find(candidate => candidate.id === item.libraryId);
+        if (!entry) {
+            return false;
+        }
+        Object.assign(entry.prompt, values);
+        saveSettings();
+        return true;
+    }
+
+    const identifier = item.prompt?.identifier;
+    const written = await mutatePreset(item.source, settings => {
+        for (const prompt of settings.prompts ?? []) {
+            if (prompt && prompt.identifier === identifier) {
+                Object.assign(prompt, values);
+            }
+        }
+    });
+    if (written && item.source === activePresetName()) {
+        await refreshActivePreset();
+    }
+    return written;
 }
 
 /**
@@ -1333,11 +1425,11 @@ async function addToLibraryFlow(items, folder = '') {
 }
 
 /**
- * Lets the user pick which preset copies of a block should follow a library edit.
- * @param {{preset: string, prompt: object, linked: boolean}[]} found
- * @returns {Promise<{preset: string, prompt: object}[]|null>}
+ * Lets the user pick which copies of a block should follow an edit.
+ * @param {BlockCopy[]} copies
+ * @returns {Promise<BlockCopy[]|null>}
  */
-async function pickPropagationTargets(found) {
+async function pickPropagationTargets(copies) {
     const root = document.createElement('div');
     root.classList.add('pbl-propagate');
 
@@ -1347,21 +1439,21 @@ async function pickPropagationTargets(found) {
     root.append(hint);
 
     const boxes = [];
-    for (const target of found) {
+    for (const copy of copies) {
         const row = document.createElement('label');
         row.classList.add('pbl-target');
 
         const box = document.createElement('input');
         box.type = 'checkbox';
         box.checked = true;
-        boxes.push({ box, target });
+        boxes.push({ box, copy });
 
         const text = document.createElement('span');
         const title = document.createElement('div');
-        title.textContent = `${target.preset} — ${target.prompt?.name}`;
+        title.textContent = copy.label;
         const badge = document.createElement('small');
         badge.classList.add('pbl-conflict-target');
-        badge.textContent = target.linked ? t('propagateLinked') : t('propagateByName');
+        badge.textContent = copy.linked ? t('propagateLinked') : t('propagateByName');
         text.append(title, badge);
 
         row.append(box, text);
@@ -1376,24 +1468,40 @@ async function pickPropagationTargets(found) {
     if (await popup.show() !== POPUP_RESULT.AFFIRMATIVE) {
         return null;
     }
-    return boxes.filter(entry => entry.box.checked).map(entry => entry.target);
+    return boxes.filter(entry => entry.box.checked).map(entry => entry.copy);
 }
 
 /**
- * Edits a library block, optionally pushing the change out to the presets.
+ * Edits a block — a library entry or a block of any preset — and offers to
+ * carry the change over to its other copies.
  * @param {BlockItem} item
  * @returns {Promise<boolean>} True when something was saved.
  */
-async function editLibraryBlock(item) {
-    const entry = getSettings().library.find(candidate => candidate.id === item.libraryId);
-    if (!entry) {
+async function editBlock(item) {
+    const entry = item.libraryId
+        ? getSettings().library.find(candidate => candidate.id === item.libraryId)
+        : null;
+    if (item.libraryId && !entry) {
         toastr.info(t('libraryOnly'));
         return false;
     }
-    const previousName = String(entry.prompt?.name ?? '');
+
+    const prompt = entry ? entry.prompt : item.prompt;
+    const previousName = String(prompt?.name ?? '');
+    const originId = entry ? entry.id : String(prompt?.[ORIGIN_FIELD] ?? '');
+    const copies = findCopies({
+        originId,
+        names: [previousName],
+        skipIdentifier: entry ? '' : prompt?.identifier,
+        skipLibraryId: entry ? entry.id : '',
+    });
 
     const root = document.createElement('div');
     root.classList.add('pbl-editor');
+
+    const where = document.createElement('div');
+    where.classList.add('pbl-editor-where');
+    where.textContent = entry ? `★ ${t('library')}` : item.source;
 
     const nameInput = document.createElement('input');
     nameInput.type = 'text';
@@ -1408,30 +1516,34 @@ async function editLibraryBlock(item) {
         option.textContent = role;
         roleSelect.append(option);
     }
-    roleSelect.value = entry.prompt?.role ?? 'system';
+    roleSelect.value = prompt?.role ?? 'system';
 
     const contentInput = document.createElement('textarea');
     contentInput.classList.add('text_pole', 'pbl-editor-text');
     contentInput.rows = 10;
-    contentInput.value = String(entry.prompt?.content ?? '');
-
-    const propagateLabel = document.createElement('label');
-    propagateLabel.classList.add('pbl-junk');
-    const propagateBox = document.createElement('input');
-    propagateBox.type = 'checkbox';
-    const propagateText = document.createElement('span');
-    propagateText.textContent = t('propagate');
-    propagateLabel.append(propagateBox, propagateText);
+    contentInput.value = String(prompt?.content ?? '');
 
     const contentField = labelledControl(t('editContent'), contentInput);
     contentField.classList.add('pbl-field-grow');
 
     root.append(
+        where,
         labelledControl(t('editName'), nameInput),
         labelledControl(t('editRole'), roleSelect),
         contentField,
-        propagateLabel,
     );
+
+    // Only worth asking about when the block actually exists somewhere else.
+    const propagateBox = document.createElement('input');
+    propagateBox.type = 'checkbox';
+    if (copies.length) {
+        const propagateLabel = document.createElement('label');
+        propagateLabel.classList.add('pbl-junk');
+        const propagateText = document.createElement('span');
+        propagateText.textContent = t('propagateCount', copies.length);
+        propagateLabel.append(propagateBox, propagateText);
+        root.append(propagateLabel);
+    }
 
     const popup = new Popup(root, POPUP_TYPE.TEXT, '', {
         okButton: t('save'),
@@ -1444,32 +1556,48 @@ async function editLibraryBlock(item) {
         return false;
     }
 
-    entry.prompt.name = nameInput.value.trim() || previousName;
-    entry.prompt.role = roleSelect.value;
-    entry.prompt.content = contentInput.value;
-    saveSettings();
+    const values = {
+        name: nameInput.value.trim() || previousName,
+        role: roleSelect.value,
+        content: contentInput.value,
+    };
 
-    if (!propagateBox.checked) {
+    // Blocks that were never copied by this extension have nothing tying them
+    // together. If the edit is about to travel to them, give the whole group a
+    // stamp now, so the next edit finds them exactly instead of by name.
+    const groupId = originId || (propagateBox.checked && copies.length ? uuidv4() : '');
+    if (!entry && groupId) {
+        values[ORIGIN_FIELD] = groupId;
+    }
+
+    try {
+        if (!await saveBlockInPlace(item, values)) {
+            toastr.error(t('saveFailed'));
+            return false;
+        }
+    } catch (error) {
+        console.error(`[${MODULE_NAME}] save failed`, error);
+        toastr.error(t('saveFailed'));
+        return false;
+    }
+
+    if (!propagateBox.checked || !copies.length) {
         toastr.success(t('saved'));
         return true;
     }
 
-    const found = findLinkedBlocks(entry, previousName);
-    if (!found.length) {
-        toastr.info(t('propagateNone'));
-        return true;
-    }
-    const chosen = await pickPropagationTargets(found);
+    const chosen = await pickPropagationTargets(copies);
     if (!chosen?.length) {
         toastr.success(t('saved'));
         return true;
     }
     try {
-        const updated = await updateBlocksInPresets(chosen, entry.prompt, entry.id);
+        const source = entry ? entry.prompt : { ...prompt, ...values };
+        const updated = await applyCopies(chosen, source, groupId);
         toastr.success(t('propagateDone', updated));
     } catch (error) {
         console.error(`[${MODULE_NAME}] propagation failed`, error);
-        toastr.error(t('transferFailed'));
+        toastr.error(t('saveFailed'));
     }
     return true;
 }
@@ -1886,19 +2014,17 @@ function openMainWindow() {
             const rowActions = document.createElement('div');
             rowActions.classList.add('pbl-item-actions');
 
-            if (item.libraryId) {
-                const edit = document.createElement('div');
-                edit.classList.add('fa-solid', 'fa-pencil', 'pbl-icon');
-                edit.title = t('editBlock');
-                edit.addEventListener('click', async event => {
-                    event.stopPropagation();
-                    if (await editLibraryBlock(item)) {
-                        renderTagBar();
-                        renderList();
-                    }
-                });
-                rowActions.append(edit);
-            }
+            const edit = document.createElement('div');
+            edit.classList.add('fa-solid', 'fa-pencil', 'pbl-icon');
+            edit.title = t('editBlock');
+            edit.addEventListener('click', async event => {
+                event.stopPropagation();
+                if (await editBlock(item)) {
+                    renderTagBar();
+                    renderList();
+                }
+            });
+            rowActions.append(edit);
 
             const expand = document.createElement('div');
             expand.classList.add('fa-solid', 'fa-chevron-down', 'pbl-icon');
@@ -1985,12 +2111,12 @@ function openMainWindow() {
 
         switch (action) {
             case 'edit': {
-                const entries = [...selection.values()].filter(item => item.libraryId);
+                const entries = [...selection.values()];
                 if (entries.length !== 1) {
                     toastr.info(t('oneBlockOnly'));
                     break;
                 }
-                if (await editLibraryBlock(entries[0])) {
+                if (await editBlock(entries[0])) {
                     renderTagBar();
                     renderList();
                 }
@@ -2138,8 +2264,8 @@ function openMainWindow() {
  */
 async function showMoreMenu({ isLibrary, folder }) {
     const entries = [
+        { id: 'edit', icon: 'fa-pencil', text: t('editBlock') },
         ...(isLibrary ? [
-            { id: 'edit', icon: 'fa-pencil', text: t('editBlock') },
             { id: 'tags', icon: 'fa-tags', text: t('editTags') },
             { id: 'move', icon: 'fa-folder-open', text: t('moveToFolder') },
             { id: 'newFolder', icon: 'fa-folder-plus', text: t('newFolder') },

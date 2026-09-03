@@ -341,6 +341,13 @@
     box-sizing: border-box;
 }
 
+.pbl-editor-where {
+    margin-bottom: 8px;
+    font-size: 0.85em;
+    opacity: 0.7;
+    word-break: break-word;
+}
+
 .pbl-editor {
     display: flex;
     flex-direction: column;
