@@ -146,13 +146,14 @@ const STRINGS = {
         presetOnly: 'Preset blocks only.',
         folders: 'Folders',
         moveToFolder: 'Move to folder',
+        toFolderFromPreset: 'To library, into a folder',
         newFolder: 'New folder',
         newFolderPrompt: 'Folder name:',
         renameFolder: 'Rename folder',
         deleteFolder: 'Delete folder',
         deleteFolderConfirm: 'Delete the folder "{0}"? The blocks in it stay in the library, without a folder.',
         folderExists: 'A folder with this name already exists.',
-        pickFolder: 'Move {0} block(s) to:',
+        pickFolder: 'Blocks: {0}. Folder:',
         movedToFolder: 'Moved: {0}',
         folderOnly: 'Open a folder first.',
         oneBlockOnly: 'Pick exactly one block.',
@@ -238,13 +239,14 @@ const STRINGS = {
         presetOnly: 'Только для блоков из пресетов.',
         folders: 'Папки',
         moveToFolder: 'Переместить в папку',
+        toFolderFromPreset: 'В библиотеку, в папку',
         newFolder: 'Новая папка',
         newFolderPrompt: 'Название папки:',
         renameFolder: 'Переименовать папку',
         deleteFolder: 'Удалить папку',
         deleteFolderConfirm: 'Удалить папку «{0}»? Блоки из неё останутся в библиотеке, без папки.',
         folderExists: 'Папка с таким названием уже есть.',
-        pickFolder: 'Переместить блоков: {0}. Куда:',
+        pickFolder: 'Блоков: {0}. В какую папку:',
         movedToFolder: 'Перемещено: {0}',
         folderOnly: 'Сначала открой папку.',
         oneBlockOnly: 'Выбери ровно один блок.',
@@ -822,8 +824,10 @@ async function applyTransfer(plan) {
             const order = getOrder(settings, true);
             for (const prompt of prompts) {
                 settings.prompts.push(structuredClone(prompt));
-                order.push({ identifier: prompt.identifier, enabled: true });
             }
+            // At the top of the list, where a freshly copied block is easy to
+            // find and to drag down to its place.
+            order.unshift(...prompts.map(prompt => ({ identifier: prompt.identifier, enabled: true })));
         });
 
         if (!written) {
@@ -1367,10 +1371,12 @@ async function resolveLibraryVersion(existing, prompt) {
 /**
  * Puts blocks into the library, asking about name clashes one by one.
  * @param {BlockItem[]} items
- * @param {string} [folder] Folder the new entries land in.
+ * @param {object} [options]
+ * @param {string} [options.folder] Folder the new entries land in.
+ * @param {boolean} [options.quiet] Skip the toasts — the caller reports instead.
  * @returns {Promise<{added: number, updated: number}>}
  */
-async function addToLibraryFlow(items, folder = '') {
+async function addToLibraryFlow(items, { folder = '', quiet = false } = {}) {
     let added = 0;
     let updated = 0;
     let duplicates = 0;
@@ -1412,14 +1418,16 @@ async function addToLibraryFlow(items, folder = '') {
         added++;
     }
 
-    if (added) {
-        toastr.success(t('addedToLibrary', added));
-    }
-    if (updated) {
-        toastr.success(t('updatedInLibrary', updated));
-    }
-    if (!added && !updated && duplicates) {
-        toastr.info(t('alreadyInLibrary'));
+    if (!quiet) {
+        if (added) {
+            toastr.success(t('addedToLibrary', added));
+        }
+        if (updated) {
+            toastr.success(t('updatedInLibrary', updated));
+        }
+        if (!added && !updated && duplicates) {
+            toastr.info(t('alreadyInLibrary'));
+        }
     }
     return { added, updated };
 }
@@ -2089,7 +2097,10 @@ function openMainWindow() {
     });
 
     transferButton.addEventListener('click', async () => {
-        await transferBlocks([...selection.values()]);
+        if (await transferBlocks([...selection.values()])) {
+            selection.clear();
+            renderList();
+        }
     });
 
     libraryButton.addEventListener('click', async () => {
@@ -2098,7 +2109,8 @@ function openMainWindow() {
             toastr.info(t('nothingSelected'));
             return;
         }
-        await addToLibraryFlow(items, folderOfSource(sourceSelect.value) ?? '');
+        await addToLibraryFlow(items, { folder: folderOfSource(sourceSelect.value) ?? '' });
+        selection.clear();
         fillSources();
         renderTagBar();
         renderList();
@@ -2117,6 +2129,7 @@ function openMainWindow() {
                     break;
                 }
                 if (await editBlock(entries[0])) {
+                    selection.clear();
                     renderTagBar();
                     renderList();
                 }
@@ -2124,27 +2137,34 @@ function openMainWindow() {
             }
             case 'delete': {
                 if (await deleteBlocksFlow([...selection.values()])) {
-                    for (const item of [...selection.values()]) {
-                        if (item.source !== LIBRARY_SOURCE) {
-                            selection.delete(item.key);
-                        }
-                    }
+                    selection.clear();
                     renderList();
                 }
                 break;
             }
             case 'move': {
-                const ids = [...selection.values()].map(item => item.libraryId).filter(Boolean);
-                if (!ids.length) {
-                    toastr.info(t('libraryOnly'));
+                const items = [...selection.values()];
+                if (!items.length) {
+                    toastr.info(t('nothingSelected'));
                     break;
                 }
-                const target = await pickFolder(ids.length);
+                const target = await pickFolder(items.length);
                 if (target === null) {
                     break;
                 }
-                toastr.success(t('movedToFolder', moveToFolder(ids, target)));
+                // Library blocks change folder; preset blocks are copied into
+                // the library and land in that folder straight away.
+                const libraryIds = items.filter(item => item.libraryId).map(item => item.libraryId);
+                const fromPresets = items.filter(item => !item.libraryId);
+                let moved = libraryIds.length ? moveToFolder(libraryIds, target) : 0;
+                if (fromPresets.length) {
+                    const { added } = await addToLibraryFlow(fromPresets, { folder: target, quiet: true });
+                    moved += added;
+                }
+                toastr.success(t('movedToFolder', moved));
+                selection.clear();
                 fillSources();
+                renderTagBar();
                 renderList();
                 break;
             }
@@ -2201,6 +2221,7 @@ function openMainWindow() {
             }
             case 'tags': {
                 if (await editTags([...selection.values()])) {
+                    selection.clear();
                     renderTagBar();
                     renderList();
                 }
@@ -2213,11 +2234,7 @@ function openMainWindow() {
                     break;
                 }
                 const removed = removeFromLibrary(ids);
-                for (const item of [...selection.values()]) {
-                    if (item.libraryId) {
-                        selection.delete(item.key);
-                    }
-                }
+                selection.clear();
                 toastr.success(t('removed', removed));
                 renderTagBar();
                 renderList();
@@ -2265,9 +2282,11 @@ function openMainWindow() {
 async function showMoreMenu({ isLibrary, folder }) {
     const entries = [
         { id: 'edit', icon: 'fa-pencil', text: t('editBlock') },
+        // Blocks go into a library folder straight from a preset, without the
+        // detour through the library root.
+        { id: 'move', icon: 'fa-folder-open', text: isLibrary ? t('moveToFolder') : t('toFolderFromPreset') },
         ...(isLibrary ? [
             { id: 'tags', icon: 'fa-tags', text: t('editTags') },
-            { id: 'move', icon: 'fa-folder-open', text: t('moveToFolder') },
             { id: 'newFolder', icon: 'fa-folder-plus', text: t('newFolder') },
             ...(folder ? [
                 { id: 'renameFolder', icon: 'fa-i-cursor', text: t('renameFolder') },
